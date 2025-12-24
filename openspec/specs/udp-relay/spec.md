@@ -65,6 +65,7 @@ The system SHALL support configuration via command-line flags and/or a YAML conf
   - Mode: `client`
   - Listen address: UDP address to listen on (e.g., `:5000`)
   - Server endpoints: List of server addresses with protocol (e.g., `server:8001/udp,server:8002/tcp`)
+  - Verbose: Enable debug-level logging (optional, default: false)
 
 #### Scenario: Server mode configuration
 - **WHEN** running in server mode
@@ -73,11 +74,17 @@ The system SHALL support configuration via command-line flags and/or a YAML conf
   - Listen addresses: List of addresses with protocol to listen on (e.g., `:8001/udp,:8002/tcp`)
   - Target address: UDP address of the target server (e.g., `target:9000`)
   - Dedup window size: Number of sequence numbers to track (default: 10000)
+  - Verbose: Enable debug-level logging (optional, default: false)
 
 #### Scenario: Config file usage
 - **WHEN** `--config` flag specifies a YAML file path
 - **THEN** the system loads configuration from that file
 - **AND** CLI flags override any values from the file
+
+#### Scenario: Verbose flag usage
+- **WHEN** `-verbose` flag is provided or `verbose: true` is set in config file
+- **THEN** the system enables debug-level logging
+- **AND** packet forwarding details (sequence number, size) are logged
 
 ### Requirement: Logging
 The system SHALL log significant events including startup, shutdown, errors, and optionally packet forwarding statistics.
@@ -89,6 +96,11 @@ The system SHALL log significant events including startup, shutdown, errors, and
 #### Scenario: Error logging
 - **WHEN** an error occurs (e.g., failed to bind port, failed to send packet)
 - **THEN** the error is logged with context
+
+#### Scenario: Verbose packet logging
+- **WHEN** verbose mode is enabled
+- **THEN** the system logs each packet forwarding event with sequence number and payload size
+- **AND** duplicate packet discards are logged with sequence number
 
 ### Requirement: Graceful Shutdown
 The system SHALL handle SIGINT and SIGTERM signals and perform a graceful shutdown, closing all connections and listeners.

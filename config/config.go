@@ -68,9 +68,10 @@ type ServerConfig struct {
 }
 
 type Config struct {
-	Mode   Mode          `yaml:"mode"`
-	Client *ClientConfig `yaml:"client,omitempty"`
-	Server *ServerConfig `yaml:"server,omitempty"`
+	Mode    Mode          `yaml:"mode"`
+	Verbose bool          `yaml:"verbose"`
+	Client  *ClientConfig `yaml:"client,omitempty"`
+	Server  *ServerConfig `yaml:"server,omitempty"`
 }
 
 const DefaultDedupWindow = 10000
@@ -153,13 +154,14 @@ func LoadFromFile(path string) (*Config, error) {
 }
 
 type CLIFlags struct {
-	ConfigFile       string
-	Mode             string
-	ListenAddr       string
-	Servers          string
-	ListenAddrs      string
-	TargetAddr       string
-	DedupWindow      int
+	ConfigFile  string
+	Mode        string
+	Verbose     bool
+	ListenAddr  string
+	Servers     string
+	ListenAddrs string
+	TargetAddr  string
+	DedupWindow int
 }
 
 func ParseCLIFlags(args []string) (*CLIFlags, error) {
@@ -168,6 +170,7 @@ func ParseCLIFlags(args []string) (*CLIFlags, error) {
 	flags := &CLIFlags{}
 	fs.StringVar(&flags.ConfigFile, "config", "", "Path to YAML config file")
 	fs.StringVar(&flags.Mode, "mode", "", "Mode: 'client' or 'server'")
+	fs.BoolVar(&flags.Verbose, "verbose", false, "Enable debug-level logging")
 	fs.StringVar(&flags.ListenAddr, "listen", "", "Client: UDP address to listen on (e.g., :5000)")
 	fs.StringVar(&flags.Servers, "servers", "", "Client: Server endpoints (e.g., server:8001/udp,server:8002/tcp)")
 	fs.StringVar(&flags.ListenAddrs, "listen-addrs", "", "Server: Listen addresses (e.g., :8001/udp,:8002/tcp)")
@@ -202,6 +205,9 @@ func Load(args []string) (*Config, error) {
 	// Override with CLI flags
 	if flags.Mode != "" {
 		cfg.Mode = Mode(flags.Mode)
+	}
+	if flags.Verbose {
+		cfg.Verbose = true
 	}
 
 	// Client config overrides

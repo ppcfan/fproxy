@@ -12,14 +12,22 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
-		logger.Error("failed to load config", "error", err)
+		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
+	}
+
+	logLevel := slog.LevelInfo
+	if cfg.Verbose {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+
+	if cfg.Verbose {
+		logger.Debug("verbose logging enabled")
 	}
 
 	sigCh := make(chan os.Signal, 1)
