@@ -1,0 +1,4 @@
+mode: client
+client:
+  listen_addr: ":5000"
+  servers: "server.example.com:8001/udp,server.example.com:8002/tcp"

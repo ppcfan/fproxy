@@ -1,0 +1,5 @@
+mode: server
+server:
+  listen_addrs: ":8001/udp,:8002/tcp"
+  target_addr: "target.example.com:9000"
+  dedup_window: 10000
