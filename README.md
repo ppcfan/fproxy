@@ -1,23 +1,26 @@
 # fproxy
 
-A UDP relay with redundant multi-path transmission and packet deduplication.
+A bidirectional UDP relay with redundant multi-path transmission and packet deduplication.
 
 ## Overview
 
-fproxy enables reliable UDP forwarding through a client-server relay architecture. The client sends each UDP packet over multiple paths (UDP and/or TCP) simultaneously to the server, which deduplicates and forwards only unique packets to the target.
+fproxy enables reliable bidirectional UDP forwarding through a client-server relay architecture. The client sends each UDP packet over multiple paths (UDP and/or TCP) simultaneously to the server, which deduplicates and forwards only unique packets to the target. Responses from the target are relayed back to the original source.
 
 ```
 ┌─────────────┐         ┌─────────────┐   UDP/TCP    ┌─────────────┐         ┌─────────────┐
-│ UDP Source  │──UDP───▶│   Client    │═══════════▶│   Server    │──UDP───▶│   Target    │
+│ UDP Source  │◀──UDP──▶│   Client    │◀═══════════▶│   Server    │◀──UDP──▶│   Target    │
 │             │         │             │  multi-path  │             │         │             │
 └─────────────┘         └─────────────┘              └─────────────┘         └─────────────┘
 ```
 
 ## Features
 
+- **Bidirectional relay**: Forwards both requests to target and responses back to source
 - **Multi-path transmission**: Send packets over multiple UDP and/or TCP paths simultaneously
-- **Packet deduplication**: Server-side sliding window deduplication prevents duplicate delivery
+- **Per-session deduplication**: Server-side sliding window deduplication per session
+- **Session management**: Each source UDP socket gets its own session with isolated state
 - **Mixed protocols**: Support both UDP and TCP between client and server
+- **Session timeout**: Automatic cleanup of inactive sessions
 - **Flexible configuration**: CLI flags and/or YAML config files
 - **Graceful shutdown**: Clean handling of SIGINT/SIGTERM signals
 
@@ -37,7 +40,8 @@ Listens for UDP packets and forwards them to server endpoints:
 # CLI flags
 ./fproxy -mode client \
   -listen :5000 \
-  -servers "server1:8001/udp,server1:8002/tcp"
+  -servers "server1:8001/udp,server1:8002/tcp" \
+  -session-timeout 60s
 
 # Config file
 ./fproxy -config client.yaml
@@ -52,7 +56,8 @@ Receives packets from client, deduplicates, and forwards to target:
 ./fproxy -mode server \
   -listen-addrs ":8001/udp,:8002/tcp" \
   -target "target-server:9000" \
-  -dedup-window 10000
+  -dedup-window 10000 \
+  -session-timeout 60s
 
 # Config file
 ./fproxy -config server.yaml
@@ -71,6 +76,8 @@ Receives packets from client, deduplicates, and forwards to target:
 | `-listen-addrs` | Server: Listen addresses (e.g., `:8001/udp,:8002/tcp`) |
 | `-target` | Server: Target UDP address (e.g., `target:9000`) |
 | `-dedup-window` | Server: Deduplication window size (default: 10000) |
+| `-session-timeout` | Session timeout duration (default: 60s) |
+| `-verbose` | Enable debug-level logging |
 
 CLI flags take precedence over config file values.
 
@@ -82,6 +89,7 @@ mode: client
 client:
   listen_addr: ":5000"
   servers: "server.example.com:8001/udp,server.example.com:8002/tcp"
+  session_timeout: 60s
 ```
 
 **server.yaml**
@@ -91,18 +99,30 @@ server:
   listen_addrs: ":8001/udp,:8002/tcp"
   target_addr: "target.example.com:9000"
   dedup_window: 10000
+  session_timeout: 60s
 ```
 
 ## Protocol
 
+### Session Management
+
+Each source UDP address:port combination is assigned a unique session. Sessions are tracked independently for:
+- **Request deduplication**: Each session has its own deduplication window
+- **Response routing**: Responses from target are routed back to the correct source
+
 ### Packet Format
 
+**Both UDP and TCP Transport** (between client and server):
 ```
-┌──────────────────────┬─────────────────────────┐
-│ Sequence Number      │ Payload                 │
-│ (4 bytes, big-endian)│ (variable length)       │
-└──────────────────────┴─────────────────────────┘
+┌──────────────────────┬──────────────────────┬─────────────────────────┐
+│ Session ID           │ Sequence Number      │ Payload                 │
+│ (4 bytes, big-endian)│ (4 bytes, big-endian)│ (variable length)       │
+└──────────────────────┴──────────────────────┴─────────────────────────┘
 ```
+
+UDP and TCP use the same packet format for unified session tracking. This enables:
+- Cross-path deduplication (same session across UDP and TCP)
+- Multi-path response redundancy (responses sent via all paths)
 
 ### TCP Framing
 
@@ -114,6 +134,26 @@ For TCP transport, packets are length-prefixed:
 │ (2 bytes, big-endian)│ (up to 65535 bytes)     │
 └──────────────────────┴─────────────────────────┘
 ```
+
+## Architecture
+
+### Client
+
+1. Listens for UDP packets from sources
+2. Creates a session for each unique source address
+3. Assigns session IDs and sequence numbers
+4. Forwards packets to all configured server endpoints (multi-path)
+5. Receives responses from all paths
+6. Deduplicates responses and forwards unique ones to the original source
+
+### Server
+
+1. Listens on multiple UDP/TCP endpoints
+2. Creates a unified session per sessionID (shared across UDP and TCP)
+3. Deduplicates packets per session using sequence numbers
+4. Forwards unique packets to the target
+5. Receives responses from target
+6. Sends responses via all active paths for the session (multi-path)
 
 ## Project Structure
 

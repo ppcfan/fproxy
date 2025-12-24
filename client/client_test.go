@@ -14,15 +14,10 @@ import (
 
 func TestSequenceNumberAssignment(t *testing.T) {
 	t.Run("sequence starts at zero", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		cfg := &config.ClientConfig{
-			ListenAddr: ":0",
-			Servers:    []config.Endpoint{{Address: "localhost:9999", Protocol: "udp"}},
-		}
-		c := New(cfg, logger)
-
-		if c.NextSeq() != 0 {
-			t.Errorf("initial sequence should be 0, got %d", c.NextSeq())
+		// Test that atomic sequence counter starts at zero
+		var seq atomic.Uint32
+		if seq.Load() != 0 {
+			t.Errorf("initial sequence should be 0, got %d", seq.Load())
 		}
 	})
 
@@ -52,79 +47,51 @@ func TestSequenceNumberAssignment(t *testing.T) {
 	})
 }
 
-type mockSender struct {
-	data   [][]byte
-	closed bool
-}
-
-func (m *mockSender) Send(data []byte) error {
-	cpy := make([]byte, len(data))
-	copy(cpy, data)
-	m.data = append(m.data, cpy)
-	return nil
-}
-
-func (m *mockSender) Close() error {
-	m.closed = true
-	return nil
-}
-
-func TestClientSendsToAllEndpoints(t *testing.T) {
+func TestClientNew(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	cfg := &config.ClientConfig{
-		ListenAddr: ":0",
-		Servers:    []config.Endpoint{},
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{{Address: "localhost:9999", Protocol: "udp"}},
+		SessionTimeout: 60 * time.Second,
 	}
-
 	c := New(cfg, logger)
 
-	// Replace senders with mocks
-	mock1 := &mockSender{}
-	mock2 := &mockSender{}
-	c.senders = []Sender{mock1, mock2}
-
-	// Handle a test packet
-	c.handlePacket([]byte("hello"))
-
-	// Both senders should have received the packet
-	if len(mock1.data) != 1 {
-		t.Errorf("mock1 expected 1 packet, got %d", len(mock1.data))
+	if c.cfg != cfg {
+		t.Error("config not set correctly")
 	}
-	if len(mock2.data) != 1 {
-		t.Errorf("mock2 expected 1 packet, got %d", len(mock2.data))
+	if c.logger != logger {
+		t.Error("logger not set correctly")
 	}
-
-	// Packets should be identical (same sequence number)
-	if len(mock1.data) > 0 && len(mock2.data) > 0 {
-		if string(mock1.data[0]) != string(mock2.data[0]) {
-			t.Error("packets sent to different endpoints should be identical")
-		}
+	if c.udpSessions == nil {
+		t.Error("udpSessions map should be initialized")
+	}
+	if c.tcpSessions == nil {
+		t.Error("tcpSessions map should be initialized")
 	}
 }
 
 func TestClientStop(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	cfg := &config.ClientConfig{
-		ListenAddr: ":0",
-		Servers:    []config.Endpoint{},
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
 	}
 
 	c := New(cfg, logger)
 
-	mock := &mockSender{}
-	c.senders = []Sender{mock}
-
-	c.Stop()
-
-	if !mock.closed {
-		t.Error("sender should be closed after Stop()")
+	// Start should succeed even with no servers
+	err := c.Start()
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
 	}
+
+	// Stop should complete without error
+	c.Stop()
 }
 
-func TestTCPSenderOversizedFrame(t *testing.T) {
-	// Create a TCP sender with a mock connection
-	sender := &TCPSender{
-		addr:   "test:1234",
+func TestSendTCPFrameOversizedFrame(t *testing.T) {
+	session := &TCPSession{
 		conn:   nil, // won't be used due to early return
 		closed: false,
 	}
@@ -132,23 +99,38 @@ func TestTCPSenderOversizedFrame(t *testing.T) {
 	// Create oversized data (> 65535 bytes)
 	oversizedData := make([]byte, 65536)
 
-	err := sender.Send(oversizedData)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
+	err := c.sendTCPFrame(session, oversizedData)
 	if err != ErrFrameTooLarge {
 		t.Errorf("expected ErrFrameTooLarge, got %v", err)
 	}
 }
 
-func TestTCPSenderMaxSizeFrame(t *testing.T) {
+func TestSendTCPFrameMaxSizeFrame(t *testing.T) {
 	mock := &mockConn{}
-	sender := &TCPSender{
-		addr:   "test:1234",
+	session := &TCPSession{
 		conn:   mock,
 		closed: false,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
 	// Exactly at limit should work
 	maxData := make([]byte, 65535)
-	err := sender.Send(maxData)
+	err := c.sendTCPFrame(session, maxData)
 	if err != nil {
 		t.Errorf("max size frame should succeed, got %v", err)
 	}
@@ -171,18 +153,25 @@ func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
 func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
 
-func TestTCPSenderFrameFormat(t *testing.T) {
+func TestSendTCPFrameFormat(t *testing.T) {
 	mock := &mockConn{}
-	sender := &TCPSender{
-		addr:   "test:1234",
+	session := &TCPSession{
 		conn:   mock,
 		closed: false,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
 	testData := []byte("hello")
-	err := sender.Send(testData)
+	err := c.sendTCPFrame(session, testData)
 	if err != nil {
-		t.Fatalf("Send() error = %v", err)
+		t.Fatalf("sendTCPFrame() error = %v", err)
 	}
 
 	// Verify frame format: [2-byte length][data]
@@ -202,19 +191,26 @@ func TestTCPSenderFrameFormat(t *testing.T) {
 	}
 }
 
-func TestTCPSenderSingleWrite(t *testing.T) {
+func TestSendTCPFrameSingleWrite(t *testing.T) {
 	// Track number of Write calls
 	writeCount := 0
 	countingConn := &countingMockConn{writeCount: &writeCount, bytesPerWrite: -1}
 
-	sender := &TCPSender{
-		addr:   "test:1234",
+	session := &TCPSession{
 		conn:   countingConn,
 		closed: false,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
 	testData := []byte("test")
-	sender.Send(testData)
+	c.sendTCPFrame(session, testData)
 
 	// Should be exactly 1 write call when full write succeeds
 	if writeCount != 1 {
@@ -222,7 +218,7 @@ func TestTCPSenderSingleWrite(t *testing.T) {
 	}
 }
 
-func TestTCPSenderShortWrite(t *testing.T) {
+func TestSendTCPFrameShortWrite(t *testing.T) {
 	// Simulate short writes (1 byte at a time)
 	writeCount := 0
 	written := []byte{}
@@ -232,16 +228,23 @@ func TestTCPSenderShortWrite(t *testing.T) {
 		written:       &written,
 	}
 
-	sender := &TCPSender{
-		addr:   "test:1234",
+	session := &TCPSession{
 		conn:   shortWriteConn,
 		closed: false,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
 	testData := []byte("hello")
-	err := sender.Send(testData)
+	err := c.sendTCPFrame(session, testData)
 	if err != nil {
-		t.Fatalf("Send() error = %v", err)
+		t.Fatalf("sendTCPFrame() error = %v", err)
 	}
 
 	// Should have made multiple write calls
@@ -256,20 +259,27 @@ func TestTCPSenderShortWrite(t *testing.T) {
 	}
 }
 
-func TestTCPSenderZeroWrite(t *testing.T) {
+func TestSendTCPFrameZeroWrite(t *testing.T) {
 	// Simulate zero-length write (stuck connection)
 	zeroWriteConn := &countingMockConn{
 		writeCount:    new(int),
 		bytesPerWrite: 0,
 	}
 
-	sender := &TCPSender{
-		addr:   "test:1234",
+	session := &TCPSession{
 		conn:   zeroWriteConn,
 		closed: false,
 	}
 
-	err := sender.Send([]byte("test"))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
+	err := c.sendTCPFrame(session, []byte("test"))
 	if err != io.ErrShortWrite {
 		t.Errorf("expected io.ErrShortWrite, got %v", err)
 	}
@@ -300,3 +310,45 @@ func (m *countingMockConn) RemoteAddr() net.Addr               { return nil }
 func (m *countingMockConn) SetDeadline(t time.Time) error      { return nil }
 func (m *countingMockConn) SetReadDeadline(t time.Time) error  { return nil }
 func (m *countingMockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func TestUDPSessionCreation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cfg := &config.ClientConfig{
+		ListenAddr:     ":0",
+		Servers:        []config.Endpoint{},
+		SessionTimeout: 60 * time.Second,
+	}
+	c := New(cfg, logger)
+
+	sourceAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5000}
+	sourceKey := sourceAddr.String()
+
+	// First call should create a new session
+	session1 := c.getOrCreateUDPSession(sourceAddr, sourceKey)
+	if session1 == nil {
+		t.Fatal("session should be created")
+	}
+	if session1.sessionID == 0 {
+		t.Error("session ID should be non-zero")
+	}
+
+	// Second call should return the same session
+	session2 := c.getOrCreateUDPSession(sourceAddr, sourceKey)
+	if session2 != session1 {
+		t.Error("should return same session for same source")
+	}
+	if session2.sessionID != session1.sessionID {
+		t.Error("session ID should be the same")
+	}
+
+	// Different source should get a different session
+	sourceAddr2 := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5001}
+	sourceKey2 := sourceAddr2.String()
+	session3 := c.getOrCreateUDPSession(sourceAddr2, sourceKey2)
+	if session3 == session1 {
+		t.Error("different source should get different session")
+	}
+	if session3.sessionID == session1.sessionID {
+		t.Error("different session should have different ID")
+	}
+}

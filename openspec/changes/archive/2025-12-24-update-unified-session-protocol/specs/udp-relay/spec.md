@@ -1,8 +1,5 @@
-# udp-relay Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-udp-relay. Update Purpose after archive.
-## Requirements
 ### Requirement: Client Mode
 The system SHALL operate in client mode when configured. In client mode, the system SHALL listen on a specified UDP port, track sessions by source address, assign sequence numbers for deduplication, and forward packets to configured server endpoints. The client SHALL also receive response packets from servers and forward them back to the original source address.
 
@@ -126,63 +123,6 @@ The server SHALL maintain deduplication state per session to detect duplicate pa
 - **WHEN** a session times out or is closed
 - **THEN** the associated deduplication window is also removed
 
-### Requirement: Configuration
-The system SHALL support configuration via command-line flags and/or a YAML configuration file. CLI flags SHALL take precedence over config file values.
-
-#### Scenario: Client mode configuration
-- **WHEN** running in client mode
-- **THEN** the following MUST be configurable:
-  - Mode: `client`
-  - Listen address: UDP address to listen on (e.g., `:5000`)
-  - Server endpoints: List of server addresses with protocol (e.g., `server:8001/udp,server:8002/tcp`)
-  - Session timeout: Duration before inactive sessions expire (default: 60s)
-  - Verbose: Enable debug-level logging (optional, default: false)
-
-#### Scenario: Server mode configuration
-- **WHEN** running in server mode
-- **THEN** the following MUST be configurable:
-  - Mode: `server`
-  - Listen addresses: List of addresses with protocol to listen on (e.g., `:8001/udp,:8002/tcp`)
-  - Target address: UDP address of the target server (e.g., `target:9000`)
-  - Dedup window size: Number of sequence numbers to track per session (default: 10000)
-  - Session timeout: Duration before target sockets are closed (default: 60s)
-  - Verbose: Enable debug-level logging (optional, default: false)
-
-#### Scenario: Config file usage
-- **WHEN** `--config` flag specifies a YAML file path
-- **THEN** the system loads configuration from that file
-- **AND** CLI flags override any values from the file
-
-#### Scenario: Verbose flag usage
-- **WHEN** `-verbose` flag is provided or `verbose: true` is set in config file
-- **THEN** the system enables debug-level logging
-- **AND** packet forwarding details (session_id, sequence number, size, direction) are logged
-
-### Requirement: Logging
-The system SHALL log significant events including startup, shutdown, errors, and optionally packet forwarding statistics.
-
-#### Scenario: Startup logging
-- **WHEN** the system starts
-- **THEN** it logs the mode, listen addresses, and target/server endpoints
-
-#### Scenario: Error logging
-- **WHEN** an error occurs (e.g., failed to bind port, failed to send packet)
-- **THEN** the error is logged with context
-
-#### Scenario: Verbose packet logging
-- **WHEN** verbose mode is enabled
-- **THEN** the system logs each packet forwarding event with sequence number and payload size
-- **AND** duplicate packet discards are logged with sequence number
-
-### Requirement: Graceful Shutdown
-The system SHALL handle SIGINT and SIGTERM signals and perform a graceful shutdown, closing all connections and listeners.
-
-#### Scenario: Graceful shutdown on signal
-- **WHEN** SIGINT or SIGTERM is received
-- **THEN** the system stops accepting new packets
-- **AND** closes all active connections and listeners
-- **AND** exits cleanly
-
 ### Requirement: Session Management
 The system SHALL maintain session state to map source UDP addresses to target UDP sockets for bidirectional communication.
 
@@ -249,4 +189,3 @@ The system SHALL route responses from the target server back to the original sou
 - **THEN** each source address has exactly one corresponding target socket on the server
 - **AND** responses from each target socket are routed only to the corresponding source
 - **AND** responses may be sent via multiple transport paths for redundancy
-

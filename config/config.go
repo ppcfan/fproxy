@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,16 +56,18 @@ func ParseEndpoints(s string) ([]Endpoint, error) {
 }
 
 type ClientConfig struct {
-	ListenAddr string     `yaml:"listen_addr"`
-	Servers    []Endpoint `yaml:"-"`
-	ServersRaw string     `yaml:"servers"`
+	ListenAddr     string        `yaml:"listen_addr"`
+	Servers        []Endpoint    `yaml:"-"`
+	ServersRaw     string        `yaml:"servers"`
+	SessionTimeout time.Duration `yaml:"session_timeout"`
 }
 
 type ServerConfig struct {
-	ListenAddrs    []Endpoint `yaml:"-"`
-	ListenAddrsRaw string     `yaml:"listen_addrs"`
-	TargetAddr     string     `yaml:"target_addr"`
-	DedupWindow    int        `yaml:"dedup_window"`
+	ListenAddrs    []Endpoint    `yaml:"-"`
+	ListenAddrsRaw string        `yaml:"listen_addrs"`
+	TargetAddr     string        `yaml:"target_addr"`
+	DedupWindow    int           `yaml:"dedup_window"`
+	SessionTimeout time.Duration `yaml:"session_timeout"`
 }
 
 type Config struct {
@@ -74,7 +77,10 @@ type Config struct {
 	Server  *ServerConfig `yaml:"server,omitempty"`
 }
 
-const DefaultDedupWindow = 10000
+const (
+	DefaultDedupWindow    = 10000
+	DefaultSessionTimeout = 60 * time.Second
+)
 
 var (
 	ErrModeRequired          = errors.New("mode is required: must be 'client' or 'server'")
@@ -103,6 +109,9 @@ func (c *Config) Validate() error {
 		if len(c.Client.Servers) == 0 {
 			return ErrClientServersRequired
 		}
+		if c.Client.SessionTimeout <= 0 {
+			c.Client.SessionTimeout = DefaultSessionTimeout
+		}
 	}
 
 	if c.Mode == ModeServer {
@@ -117,6 +126,9 @@ func (c *Config) Validate() error {
 		}
 		if c.Server.DedupWindow <= 0 {
 			c.Server.DedupWindow = DefaultDedupWindow
+		}
+		if c.Server.SessionTimeout <= 0 {
+			c.Server.SessionTimeout = DefaultSessionTimeout
 		}
 	}
 
@@ -154,14 +166,15 @@ func LoadFromFile(path string) (*Config, error) {
 }
 
 type CLIFlags struct {
-	ConfigFile  string
-	Mode        string
-	Verbose     bool
-	ListenAddr  string
-	Servers     string
-	ListenAddrs string
-	TargetAddr  string
-	DedupWindow int
+	ConfigFile     string
+	Mode           string
+	Verbose        bool
+	ListenAddr     string
+	Servers        string
+	ListenAddrs    string
+	TargetAddr     string
+	DedupWindow    int
+	SessionTimeout time.Duration
 }
 
 func ParseCLIFlags(args []string) (*CLIFlags, error) {
@@ -176,6 +189,7 @@ func ParseCLIFlags(args []string) (*CLIFlags, error) {
 	fs.StringVar(&flags.ListenAddrs, "listen-addrs", "", "Server: Listen addresses (e.g., :8001/udp,:8002/tcp)")
 	fs.StringVar(&flags.TargetAddr, "target", "", "Server: Target UDP address (e.g., target:9000)")
 	fs.IntVar(&flags.DedupWindow, "dedup-window", 0, "Server: Deduplication window size (default: 10000)")
+	fs.DurationVar(&flags.SessionTimeout, "session-timeout", 0, "Session timeout duration (default: 60s)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -211,7 +225,7 @@ func Load(args []string) (*Config, error) {
 	}
 
 	// Client config overrides
-	if flags.ListenAddr != "" || flags.Servers != "" {
+	if flags.ListenAddr != "" || flags.Servers != "" || flags.SessionTimeout > 0 {
 		if cfg.Client == nil {
 			cfg.Client = &ClientConfig{}
 		}
@@ -225,10 +239,13 @@ func Load(args []string) (*Config, error) {
 			}
 			cfg.Client.Servers = endpoints
 		}
+		if flags.SessionTimeout > 0 {
+			cfg.Client.SessionTimeout = flags.SessionTimeout
+		}
 	}
 
 	// Server config overrides
-	if flags.ListenAddrs != "" || flags.TargetAddr != "" || flags.DedupWindow > 0 {
+	if flags.ListenAddrs != "" || flags.TargetAddr != "" || flags.DedupWindow > 0 || flags.SessionTimeout > 0 {
 		if cfg.Server == nil {
 			cfg.Server = &ServerConfig{}
 		}
@@ -244,6 +261,9 @@ func Load(args []string) (*Config, error) {
 		}
 		if flags.DedupWindow > 0 {
 			cfg.Server.DedupWindow = flags.DedupWindow
+		}
+		if flags.SessionTimeout > 0 {
+			cfg.Server.SessionTimeout = flags.SessionTimeout
 		}
 	}
 
