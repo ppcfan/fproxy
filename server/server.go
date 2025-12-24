@@ -21,6 +21,9 @@ type Server struct {
 	wg          sync.WaitGroup
 	ctx         context.Context
 	cancel      context.CancelFunc
+
+	tcpConnsMu  sync.Mutex
+	tcpConns    map[net.Conn]struct{}
 }
 
 type DedupWindow struct {
@@ -88,11 +91,12 @@ func (d *DedupWindow) IsDuplicate(seq uint32) bool {
 func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		cfg:    cfg,
-		logger: logger,
-		dedup:  NewDedupWindow(cfg.DedupWindow),
-		ctx:    ctx,
-		cancel: cancel,
+		cfg:      cfg,
+		logger:   logger,
+		dedup:    NewDedupWindow(cfg.DedupWindow),
+		ctx:      ctx,
+		cancel:   cancel,
+		tcpConns: make(map[net.Conn]struct{}),
 	}
 }
 
@@ -217,7 +221,16 @@ func (s *Server) handleTCPListener(ln net.Listener) {
 
 func (s *Server) handleTCPConn(conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+	defer func() {
+		conn.Close()
+		s.tcpConnsMu.Lock()
+		delete(s.tcpConns, conn)
+		s.tcpConnsMu.Unlock()
+	}()
+
+	s.tcpConnsMu.Lock()
+	s.tcpConns[conn] = struct{}{}
+	s.tcpConnsMu.Unlock()
 
 	// For TCP, we need length-prefixed messages
 	// Format: [2-byte length (big-endian)][packet data]
@@ -283,6 +296,13 @@ func (s *Server) Stop() {
 	for _, ln := range s.listeners {
 		ln.Close()
 	}
+
+	// Close all active TCP connections
+	s.tcpConnsMu.Lock()
+	for conn := range s.tcpConns {
+		conn.Close()
+	}
+	s.tcpConnsMu.Unlock()
 
 	if s.targetConn != nil {
 		s.targetConn.Close()
