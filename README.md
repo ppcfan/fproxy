@@ -1,6 +1,6 @@
 # fproxy
 
-A bidirectional UDP relay with redundant multi-path transmission and packet deduplication.
+A Layer 4 (L4) bidirectional UDP relay with redundant multi-path transmission and packet deduplication.
 
 ## Overview
 
@@ -40,7 +40,7 @@ Listens for UDP packets and forwards them to server endpoints:
 # CLI flags
 ./fproxy -mode client \
   -listen :5000 \
-  -servers "server1:8001/udp,server1:8002/tcp" \
+  -servers "192.168.1.100:8001/udp,192.168.1.100:8002/tcp" \
   -session-timeout 60s
 
 # Config file
@@ -55,7 +55,7 @@ Receives packets from client, deduplicates, and forwards to target:
 # CLI flags
 ./fproxy -mode server \
   -listen-addrs ":8001/udp,:8002/tcp" \
-  -target "target-server:9000" \
+  -target "192.168.1.200:9000" \
   -dedup-window 10000 \
   -session-timeout 60s
 
@@ -72,14 +72,36 @@ Receives packets from client, deduplicates, and forwards to target:
 | `-config` | Path to YAML config file |
 | `-mode` | Mode: `client` or `server` |
 | `-listen` | Client: UDP address to listen on (e.g., `:5000`) |
-| `-servers` | Client: Server endpoints (e.g., `host:8001/udp,host:8002/tcp`) |
+| `-servers` | Client: Server endpoints (e.g., `192.168.1.100:8001/udp,192.168.1.100:8002/tcp`) |
 | `-listen-addrs` | Server: Listen addresses (e.g., `:8001/udp,:8002/tcp`) |
-| `-target` | Server: Target UDP address (e.g., `target:9000`) |
+| `-target` | Server: Target UDP address (e.g., `192.168.1.200:9000`) |
 | `-dedup-window` | Server: Deduplication window size (default: 10000) |
 | `-session-timeout` | Session timeout duration (default: 60s) |
 | `-verbose` | Enable debug-level logging |
 
 CLI flags take precedence over config file values.
+
+### Configuration Constraints
+
+**Client server endpoints must use IP addresses:**
+
+- Domain names are not supported for server endpoints
+- All server endpoints must point to the same IP address (only port and protocol may differ)
+- This ensures deterministic behavior and proper deduplication across paths
+
+```bash
+# Valid: same IP, different ports/protocols
+-servers "192.168.1.100:8001/udp,192.168.1.100:8002/tcp"
+
+# Valid: IPv6 address
+-servers "[2001:db8::1]:8001/udp,[2001:db8::1]:8002/tcp"
+
+# Invalid: domain name (will be rejected)
+-servers "server.example.com:8001/udp"
+
+# Invalid: different IPs (will be rejected)
+-servers "192.168.1.100:8001/udp,192.168.1.101:8002/tcp"
+```
 
 ### Config File Examples
 
@@ -88,7 +110,7 @@ CLI flags take precedence over config file values.
 mode: client
 client:
   listen_addr: ":5000"
-  servers: "server.example.com:8001/udp,server.example.com:8002/tcp"
+  servers: "192.168.1.100:8001/udp,192.168.1.100:8002/tcp"
   session_timeout: 60s
 ```
 
@@ -97,7 +119,7 @@ client:
 mode: server
 server:
   listen_addrs: ":8001/udp,:8002/tcp"
-  target_addr: "target.example.com:9000"
+  target_addr: "192.168.1.200:9000"
   dedup_window: 10000
   session_timeout: 60s
 ```

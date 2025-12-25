@@ -14,33 +14,53 @@ func TestParseEndpoint(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:  "valid UDP endpoint",
-			input: "localhost:8001/udp",
-			want:  Endpoint{Address: "localhost:8001", Protocol: "udp"},
+			name:  "valid UDP endpoint with IPv4",
+			input: "192.168.1.1:8001/udp",
+			want:  Endpoint{Address: "192.168.1.1:8001", Protocol: "udp"},
 		},
 		{
-			name:  "valid TCP endpoint",
-			input: "server:8002/tcp",
-			want:  Endpoint{Address: "server:8002", Protocol: "tcp"},
+			name:  "valid TCP endpoint with IPv4",
+			input: "10.0.0.1:8002/tcp",
+			want:  Endpoint{Address: "10.0.0.1:8002", Protocol: "tcp"},
+		},
+		{
+			name:  "valid endpoint with IPv6",
+			input: "[::1]:8001/udp",
+			want:  Endpoint{Address: "[::1]:8001", Protocol: "udp"},
 		},
 		{
 			name:  "uppercase protocol",
-			input: "host:1234/UDP",
-			want:  Endpoint{Address: "host:1234", Protocol: "udp"},
+			input: "127.0.0.1:1234/UDP",
+			want:  Endpoint{Address: "127.0.0.1:1234", Protocol: "udp"},
+		},
+		{
+			name:  "listen address with empty host",
+			input: ":8001/udp",
+			want:  Endpoint{Address: ":8001", Protocol: "udp"},
 		},
 		{
 			name:    "missing protocol",
-			input:   "localhost:8001",
+			input:   "192.168.1.1:8001",
 			wantErr: true,
 		},
 		{
 			name:    "invalid protocol",
-			input:   "localhost:8001/http",
+			input:   "192.168.1.1:8001/http",
 			wantErr: true,
 		},
 		{
 			name:    "empty string",
 			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "domain name not allowed",
+			input:   "localhost:8001/udp",
+			wantErr: true,
+		},
+		{
+			name:    "hostname not allowed",
+			input:   "myserver.example.com:8001/tcp",
 			wantErr: true,
 		},
 	}
@@ -68,23 +88,23 @@ func TestParseEndpoints(t *testing.T) {
 	}{
 		{
 			name:  "single endpoint",
-			input: "localhost:8001/udp",
-			want:  []Endpoint{{Address: "localhost:8001", Protocol: "udp"}},
+			input: "192.168.1.1:8001/udp",
+			want:  []Endpoint{{Address: "192.168.1.1:8001", Protocol: "udp"}},
 		},
 		{
-			name:  "multiple endpoints",
-			input: "server:8001/udp,server:8002/tcp",
+			name:  "multiple endpoints same IP",
+			input: "192.168.1.1:8001/udp,192.168.1.1:8002/tcp",
 			want: []Endpoint{
-				{Address: "server:8001", Protocol: "udp"},
-				{Address: "server:8002", Protocol: "tcp"},
+				{Address: "192.168.1.1:8001", Protocol: "udp"},
+				{Address: "192.168.1.1:8002", Protocol: "tcp"},
 			},
 		},
 		{
 			name:  "with spaces",
-			input: "server:8001/udp, server:8002/tcp",
+			input: "10.0.0.1:8001/udp, 10.0.0.1:8002/tcp",
 			want: []Endpoint{
-				{Address: "server:8001", Protocol: "udp"},
-				{Address: "server:8002", Protocol: "tcp"},
+				{Address: "10.0.0.1:8001", Protocol: "udp"},
+				{Address: "10.0.0.1:8002", Protocol: "tcp"},
 			},
 		},
 		{
@@ -94,7 +114,12 @@ func TestParseEndpoints(t *testing.T) {
 		},
 		{
 			name:    "invalid endpoint in list",
-			input:   "server:8001/udp,invalid",
+			input:   "192.168.1.1:8001/udp,invalid",
+			wantErr: true,
+		},
+		{
+			name:    "domain name in list not allowed",
+			input:   "server:8001/udp,server:8002/tcp",
 			wantErr: true,
 		},
 	}
@@ -141,7 +166,7 @@ func TestConfigValidate(t *testing.T) {
 			name: "client missing listen",
 			cfg: Config{
 				Mode:   ModeClient,
-				Client: &ClientConfig{Servers: []Endpoint{{Address: "s:1/udp", Protocol: "udp"}}},
+				Client: &ClientConfig{Servers: []Endpoint{{Address: "192.168.1.1:8001", Protocol: "udp"}}},
 			},
 			wantErr: ErrClientListenRequired,
 		},
@@ -154,12 +179,68 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: ErrClientServersRequired,
 		},
 		{
-			name: "valid client config",
+			name: "valid client config with single server",
 			cfg: Config{
 				Mode: ModeClient,
 				Client: &ClientConfig{
 					ListenAddr: ":5000",
-					Servers:    []Endpoint{{Address: "server:8001", Protocol: "udp"}},
+					Servers:    []Endpoint{{Address: "192.168.1.1:8001", Protocol: "udp"}},
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid client config with multiple servers same IP",
+			cfg: Config{
+				Mode: ModeClient,
+				Client: &ClientConfig{
+					ListenAddr: ":5000",
+					Servers: []Endpoint{
+						{Address: "192.168.1.1:8001", Protocol: "udp"},
+						{Address: "192.168.1.1:8002", Protocol: "tcp"},
+					},
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "client servers with different IPs",
+			cfg: Config{
+				Mode: ModeClient,
+				Client: &ClientConfig{
+					ListenAddr: ":5000",
+					Servers: []Endpoint{
+						{Address: "192.168.1.1:8001", Protocol: "udp"},
+						{Address: "192.168.1.2:8001", Protocol: "tcp"},
+					},
+				},
+			},
+			wantErr: ErrClientServersDifferentIPs,
+		},
+		{
+			name: "valid client config with equivalent IPv6 addresses",
+			cfg: Config{
+				Mode: ModeClient,
+				Client: &ClientConfig{
+					ListenAddr: ":5000",
+					Servers: []Endpoint{
+						{Address: "[::1]:8001", Protocol: "udp"},
+						{Address: "[0:0:0:0:0:0:0:1]:8002", Protocol: "tcp"},
+					},
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid client config with IPv6 different ports",
+			cfg: Config{
+				Mode: ModeClient,
+				Client: &ClientConfig{
+					ListenAddr: ":5000",
+					Servers: []Endpoint{
+						{Address: "[2001:db8::1]:8001", Protocol: "udp"},
+						{Address: "[2001:db8::1]:8002", Protocol: "tcp"},
+					},
 				},
 			},
 			wantErr: nil,
@@ -168,7 +249,7 @@ func TestConfigValidate(t *testing.T) {
 			name: "server missing listen addrs",
 			cfg: Config{
 				Mode:   ModeServer,
-				Server: &ServerConfig{TargetAddr: "target:9000"},
+				Server: &ServerConfig{TargetAddr: "192.168.1.100:9000"},
 			},
 			wantErr: ErrServerListenRequired,
 		},
@@ -186,7 +267,7 @@ func TestConfigValidate(t *testing.T) {
 				Mode: ModeServer,
 				Server: &ServerConfig{
 					ListenAddrs: []Endpoint{{Address: ":8001", Protocol: "udp"}},
-					TargetAddr:  "target:9000",
+					TargetAddr:  "192.168.1.100:9000",
 				},
 			},
 			wantErr: nil,
@@ -211,7 +292,7 @@ func TestLoadFromFile(t *testing.T) {
 mode: client
 client:
   listen_addr: ":5000"
-  servers: "server:8001/udp,server:8002/tcp"
+  servers: "192.168.1.1:8001/udp,192.168.1.1:8002/tcp"
 `
 	clientPath := filepath.Join(tmpDir, "client.yaml")
 	if err := os.WriteFile(clientPath, []byte(clientYAML), 0644); err != nil {
@@ -222,11 +303,22 @@ client:
 mode: server
 server:
   listen_addrs: ":8001/udp,:8002/tcp"
-  target_addr: "target:9000"
+  target_addr: "192.168.1.100:9000"
   dedup_window: 5000
 `
 	serverPath := filepath.Join(tmpDir, "server.yaml")
 	if err := os.WriteFile(serverPath, []byte(serverYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidClientYAML := `
+mode: client
+client:
+  listen_addr: ":5000"
+  servers: "server:8001/udp,server:8002/tcp"
+`
+	invalidClientPath := filepath.Join(tmpDir, "invalid_client.yaml")
+	if err := os.WriteFile(invalidClientPath, []byte(invalidClientYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -254,8 +346,8 @@ server:
 		if cfg.Mode != ModeServer {
 			t.Errorf("Mode = %v, want %v", cfg.Mode, ModeServer)
 		}
-		if cfg.Server.TargetAddr != "target:9000" {
-			t.Errorf("TargetAddr = %v, want target:9000", cfg.Server.TargetAddr)
+		if cfg.Server.TargetAddr != "192.168.1.100:9000" {
+			t.Errorf("TargetAddr = %v, want 192.168.1.100:9000", cfg.Server.TargetAddr)
 		}
 		if cfg.Server.DedupWindow != 5000 {
 			t.Errorf("DedupWindow = %d, want 5000", cfg.Server.DedupWindow)
@@ -271,6 +363,13 @@ server:
 			t.Error("LoadFromFile() expected error for nonexistent file")
 		}
 	})
+
+	t.Run("domain name in config file rejected", func(t *testing.T) {
+		_, err := LoadFromFile(invalidClientPath)
+		if err == nil {
+			t.Error("LoadFromFile() expected error for domain name in servers")
+		}
+	})
 }
 
 func TestParseCLIFlags(t *testing.T) {
@@ -281,20 +380,20 @@ func TestParseCLIFlags(t *testing.T) {
 	}{
 		{
 			name: "client flags",
-			args: []string{"-mode", "client", "-listen", ":5000", "-servers", "s:8001/udp"},
+			args: []string{"-mode", "client", "-listen", ":5000", "-servers", "192.168.1.1:8001/udp"},
 			want: &CLIFlags{
 				Mode:       "client",
 				ListenAddr: ":5000",
-				Servers:    "s:8001/udp",
+				Servers:    "192.168.1.1:8001/udp",
 			},
 		},
 		{
 			name: "server flags",
-			args: []string{"-mode", "server", "-listen-addrs", ":8001/udp", "-target", "t:9000", "-dedup-window", "5000"},
+			args: []string{"-mode", "server", "-listen-addrs", ":8001/udp", "-target", "192.168.1.100:9000", "-dedup-window", "5000"},
 			want: &CLIFlags{
 				Mode:        "server",
 				ListenAddrs: ":8001/udp",
-				TargetAddr:  "t:9000",
+				TargetAddr:  "192.168.1.100:9000",
 				DedupWindow: 5000,
 			},
 		},
@@ -340,7 +439,7 @@ func TestParseCLIFlags(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	t.Run("CLI only client", func(t *testing.T) {
-		args := []string{"-mode", "client", "-listen", ":5000", "-servers", "server:8001/udp"}
+		args := []string{"-mode", "client", "-listen", ":5000", "-servers", "192.168.1.1:8001/udp"}
 		cfg, err := Load(args)
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
@@ -354,7 +453,7 @@ func TestLoad(t *testing.T) {
 	})
 
 	t.Run("CLI only server with default dedup window", func(t *testing.T) {
-		args := []string{"-mode", "server", "-listen-addrs", ":8001/udp", "-target", "target:9000"}
+		args := []string{"-mode", "server", "-listen-addrs", ":8001/udp", "-target", "192.168.1.100:9000"}
 		cfg, err := Load(args)
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
@@ -373,7 +472,7 @@ func TestLoad(t *testing.T) {
 mode: client
 client:
   listen_addr: ":5000"
-  servers: "server:8001/udp"
+  servers: "192.168.1.1:8001/udp"
 `
 		configPath := filepath.Join(tmpDir, "config.yaml")
 		if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -388,6 +487,22 @@ client:
 		}
 		if cfg.Client.ListenAddr != ":6000" {
 			t.Errorf("ListenAddr = %v, want :6000 (CLI override)", cfg.Client.ListenAddr)
+		}
+	})
+
+	t.Run("CLI with domain name rejected", func(t *testing.T) {
+		args := []string{"-mode", "client", "-listen", ":5000", "-servers", "server:8001/udp"}
+		_, err := Load(args)
+		if err == nil {
+			t.Error("Load() expected error for domain name in servers")
+		}
+	})
+
+	t.Run("CLI with different IPs rejected", func(t *testing.T) {
+		args := []string{"-mode", "client", "-listen", ":5000", "-servers", "192.168.1.1:8001/udp,192.168.1.2:8002/tcp"}
+		_, err := Load(args)
+		if err == nil {
+			t.Error("Load() expected error for different IPs in servers")
 		}
 	})
 }

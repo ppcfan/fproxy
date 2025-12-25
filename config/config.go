@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -23,6 +24,38 @@ type Endpoint struct {
 	Protocol string // "udp" or "tcp"
 }
 
+// isValidIP checks if a string is a valid IP address (IPv4 or IPv6).
+func isValidIP(host string) bool {
+	return net.ParseIP(host) != nil
+}
+
+// extractHost extracts the host part from an address in "host:port" or ":port" format.
+func extractHost(address string) (string, error) {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", fmt.Errorf("invalid address format %q: %w", address, err)
+	}
+	return host, nil
+}
+
+// parseHostIP extracts and parses the host IP from an address.
+// Returns (nil, nil) for empty host (e.g., ":8001").
+// Returns (nil, error) if the address format is invalid or host is not a valid IP.
+func parseHostIP(address string) (net.IP, error) {
+	host, err := extractHost(address)
+	if err != nil {
+		return nil, err
+	}
+	if host == "" {
+		return nil, nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP address %q", host)
+	}
+	return ip, nil
+}
+
 func ParseEndpoint(s string) (Endpoint, error) {
 	parts := strings.Split(s, "/")
 	if len(parts) != 2 {
@@ -32,6 +65,17 @@ func ParseEndpoint(s string) (Endpoint, error) {
 	if proto != "udp" && proto != "tcp" {
 		return Endpoint{}, fmt.Errorf("invalid protocol %q: must be 'udp' or 'tcp'", proto)
 	}
+
+	// Validate that the host is an IP address, not a domain name
+	host, err := extractHost(parts[0])
+	if err != nil {
+		return Endpoint{}, err
+	}
+	// Allow empty host (e.g., ":8001" for listen addresses)
+	if host != "" && !isValidIP(host) {
+		return Endpoint{}, fmt.Errorf("invalid address %q: %w", parts[0], ErrInvalidIPAddress)
+	}
+
 	return Endpoint{Address: parts[0], Protocol: proto}, nil
 }
 
@@ -83,12 +127,14 @@ const (
 )
 
 var (
-	ErrModeRequired          = errors.New("mode is required: must be 'client' or 'server'")
-	ErrInvalidMode           = errors.New("invalid mode: must be 'client' or 'server'")
-	ErrClientListenRequired  = errors.New("client listen address is required")
-	ErrClientServersRequired = errors.New("client server endpoints are required")
-	ErrServerListenRequired  = errors.New("server listen addresses are required")
-	ErrServerTargetRequired  = errors.New("server target address is required")
+	ErrModeRequired               = errors.New("mode is required: must be 'client' or 'server'")
+	ErrInvalidMode                = errors.New("invalid mode: must be 'client' or 'server'")
+	ErrClientListenRequired       = errors.New("client listen address is required")
+	ErrClientServersRequired      = errors.New("client server endpoints are required")
+	ErrServerListenRequired       = errors.New("server listen addresses are required")
+	ErrServerTargetRequired       = errors.New("server target address is required")
+	ErrInvalidIPAddress           = errors.New("server address must be an IP address, not a domain name")
+	ErrClientServersDifferentIPs  = errors.New("all server endpoints must have the same IP address: deduplication cannot work across separate servers")
 )
 
 func (c *Config) Validate() error {
@@ -108,6 +154,22 @@ func (c *Config) Validate() error {
 		}
 		if len(c.Client.Servers) == 0 {
 			return ErrClientServersRequired
+		}
+		// Validate all server endpoints have the same IP address
+		if len(c.Client.Servers) > 1 {
+			firstIP, err := parseHostIP(c.Client.Servers[0].Address)
+			if err != nil {
+				return fmt.Errorf("invalid server address %q: %w", c.Client.Servers[0].Address, err)
+			}
+			for i := 1; i < len(c.Client.Servers); i++ {
+				ip, err := parseHostIP(c.Client.Servers[i].Address)
+				if err != nil {
+					return fmt.Errorf("invalid server address %q: %w", c.Client.Servers[i].Address, err)
+				}
+				if !firstIP.Equal(ip) {
+					return ErrClientServersDifferentIPs
+				}
+			}
 		}
 		if c.Client.SessionTimeout <= 0 {
 			c.Client.SessionTimeout = DefaultSessionTimeout

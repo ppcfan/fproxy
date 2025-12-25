@@ -1,5 +1,6 @@
 mode: server
 server:
   listen_addrs: ":8001/udp,:8002/tcp"
-  target_addr: "target.example.com:9000"
+  target_addr: "192.168.1.200:9000"
   dedup_window: 10000
+  session_timeout: 60s
