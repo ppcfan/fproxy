@@ -1,7 +1,9 @@
 # Binaries
 fproxy
-fproxy-*
 *.exe
+
+# Rust build artifacts
+fproxy-rs/target/
 
 # IDE
 .idea/
