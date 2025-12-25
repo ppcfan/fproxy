@@ -4,7 +4,7 @@
 TBD - created by archiving change add-udp-relay. Update Purpose after archive.
 ## Requirements
 ### Requirement: Client Mode
-The system SHALL operate in client mode when configured. In client mode, the system SHALL listen on a specified UDP port, track sessions by source address, assign sequence numbers for deduplication, and forward packets to configured server endpoints. The client SHALL also receive response packets from servers and forward them back to the original source address.
+The system SHALL operate in client mode when configured. In client mode, the system SHALL listen on a specified UDP port, track sessions by source address, assign sequence numbers for deduplication, and forward packets to configured server endpoints. The client SHALL also receive response packets from servers and forward them back to the original source address. The implementation MAY be written in Go or Rust.
 
 #### Scenario: Client receives and forwards UDP packet (UDP transport)
 - **WHEN** client mode is active with UDP transport and a UDP packet is received from a source address
@@ -41,7 +41,7 @@ The system SHALL operate in client mode when configured. In client mode, the sys
 - **THEN** the client discards the response and logs a warning
 
 ### Requirement: Server Mode
-The system SHALL operate in server mode when configured. In server mode, the system SHALL listen on one or more ports (UDP and/or TCP), deduplicate received packets, create dedicated target UDP sockets per session, forward unique packets to the target server, and forward responses back to the originating client.
+The system SHALL operate in server mode when configured. In server mode, the system SHALL listen on one or more ports (UDP and/or TCP), deduplicate received packets, create dedicated target UDP sockets per session, forward unique packets to the target server, and forward responses back to the originating client. The implementation MAY be written in Go or Rust.
 
 #### Scenario: Server receives and forwards unique packet (UDP transport)
 - **WHEN** server receives a request packet via UDP listener

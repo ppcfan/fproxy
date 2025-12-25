@@ -26,8 +26,18 @@ fproxy enables reliable bidirectional UDP forwarding through a client-server rel
 
 ## Installation
 
+### Go Version
+
 ```bash
 go build -o fproxy .
+```
+
+### Rust Version
+
+```bash
+cd fproxy-rs
+cargo build --release
+# Binary will be at target/release/fproxy
 ```
 
 ## Usage
@@ -179,6 +189,7 @@ For TCP transport, packets are length-prefixed:
 
 ## Project Structure
 
+### Go Version
 ```
 fproxy/
 ├── main.go           # Entry point
@@ -195,10 +206,32 @@ fproxy/
     └── server.yaml   # Example server config
 ```
 
+### Rust Version
+```
+fproxy-rs/
+├── Cargo.toml        # Project configuration
+├── src/
+│   ├── main.rs       # Entry point
+│   ├── lib.rs        # Library root
+│   ├── config.rs     # Configuration loading and validation
+│   ├── protocol.rs   # Packet encoding/decoding
+│   ├── client.rs     # Client mode implementation
+│   └── server.rs     # Server mode implementation
+└── tests/
+    └── integration_test.rs  # Integration tests
+```
+
 ## Testing
 
+### Go
 ```bash
 go test ./...
+```
+
+### Rust
+```bash
+cd fproxy-rs
+cargo test
 ```
 
 ## License
