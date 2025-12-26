@@ -91,7 +91,6 @@ struct UdpSession {
 /// TCP session tracks a session for TCP transport.
 struct TcpSession {
     writer: Mutex<WriteHalf<TcpStream>>,
-    seq: AtomicU32,
     last_activity: RwLock<Instant>,
     cancel_token: CancellationToken,
 }
@@ -127,7 +126,8 @@ impl Client {
             cancel_token: CancellationToken::new(),
             listener: RwLock::new(None),
             listen_addr: RwLock::new(None),
-            session_id_counter: AtomicU32::new(0),
+            // Use random initial value to avoid conflicts after client restart
+            session_id_counter: AtomicU32::new(rand::random()),
             udp_sessions: RwLock::new(HashMap::new()),
             udp_session_addrs: RwLock::new(HashMap::new()),
             tcp_sessions: RwLock::new(HashMap::new()),
@@ -219,23 +219,25 @@ impl Client {
     }
 
     async fn handle_packet(self: &Arc<Self>, source_addr: SocketAddr, payload: &[u8]) {
-        // Handle UDP transport endpoints
-        self.handle_udp_transport(source_addr, payload).await;
-
-        // Handle TCP transport endpoints
-        self.handle_tcp_transport(source_addr, payload).await;
-    }
-
-    async fn handle_udp_transport(self: &Arc<Self>, source_addr: SocketAddr, payload: &[u8]) {
-        // Get or create session for this source
+        // Get or create session for this source (shared across all transports)
         let session = self.get_or_create_udp_session(source_addr).await;
 
-        // Get next sequence number
+        // Get next sequence number ONCE for all paths (for deduplication consistency)
         let seq = session.seq.fetch_add(1, Ordering::SeqCst);
 
         // Update last activity
-        *session.last_activity.write().await = Instant::now();
+        let now = Instant::now();
+        *session.last_activity.write().await = now;
 
+        // Handle UDP transport endpoints
+        self.handle_udp_transport(&session, seq, payload).await;
+
+        // Handle TCP transport endpoints
+        self.handle_tcp_transport(source_addr, &session, seq, payload)
+            .await;
+    }
+
+    async fn handle_udp_transport(self: &Arc<Self>, session: &UdpSession, seq: u32, payload: &[u8]) {
         // Encode with session ID for UDP transport
         let packet = protocol::encode_udp(session.session_id, seq, payload);
 
@@ -275,10 +277,19 @@ impl Client {
             return Arc::clone(session);
         }
 
-        let session_id = self.session_id_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut session_id = self.session_id_counter.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        // Ensure session_id is never 0 (0 is often treated as invalid/uninitialized).
+        // Must increment counter again to avoid duplicate IDs after wrap.
+        if session_id == 0 {
+            session_id = self.session_id_counter.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        }
+        // Use random initial seq to avoid conflicts with server's old dedup window after restart.
+        // Limit to first half of u32 range to avoid quick wrap-around which would cause
+        // the server's dedup window to reject new packets (seq < min_seq treated as duplicate).
+        let initial_seq: u32 = rand::random::<u32>() % (u32::MAX / 2);
         let session = Arc::new(UdpSession {
             session_id,
-            seq: AtomicU32::new(0),
+            seq: AtomicU32::new(initial_seq),
             last_activity: RwLock::new(Instant::now()),
             response_dedup: RwLock::new(ResponseDedupWindow::new(DEFAULT_RESPONSE_DEDUP_SIZE)),
         });
@@ -392,9 +403,13 @@ impl Client {
         }
     }
 
-    async fn handle_tcp_transport(self: &Arc<Self>, source_addr: SocketAddr, payload: &[u8]) {
-        // Get the sessionID for this source (shared with UDP transport)
-        let udp_session = self.get_or_create_udp_session(source_addr).await;
+    async fn handle_tcp_transport(
+        self: &Arc<Self>,
+        source_addr: SocketAddr,
+        udp_session: &UdpSession,
+        seq: u32,
+        payload: &[u8],
+    ) {
         let session_id = udp_session.session_id;
 
         // For each TCP server endpoint, get or create a dedicated TCP session
@@ -421,15 +436,10 @@ impl Client {
                 );
             }
 
-            // Get next sequence number
-            let seq = session.seq.fetch_add(1, Ordering::SeqCst);
-
             // Update last activity
-            let now = Instant::now();
-            *session.last_activity.write().await = now;
-            *udp_session.last_activity.write().await = now;
+            *session.last_activity.write().await = Instant::now();
 
-            // Encode with TCP format
+            // Encode with TCP format (use same seq as UDP for deduplication)
             let packet = protocol::encode_tcp(session_id, seq, payload);
 
             // Send with length prefix
@@ -484,7 +494,6 @@ impl Client {
         let cancel_token = CancellationToken::new();
         let session = Arc::new(TcpSession {
             writer: Mutex::new(writer),
-            seq: AtomicU32::new(0),
             last_activity: RwLock::new(Instant::now()),
             cancel_token: cancel_token.clone(),
         });

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -91,7 +92,6 @@ type UDPSession struct {
 // TCPSession tracks a session for TCP transport.
 type TCPSession struct {
 	conn         net.Conn
-	seq          atomic.Uint32
 	lastActivity time.Time
 	mu           sync.Mutex
 	closed       bool
@@ -134,7 +134,7 @@ type Client struct {
 // New creates a new Client instance.
 func New(cfg *config.ClientConfig, logger *slog.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Client{
+	c := &Client{
 		cfg:             cfg,
 		logger:          logger,
 		ctx:             ctx,
@@ -144,6 +144,18 @@ func New(cfg *config.ClientConfig, logger *slog.Logger) *Client {
 		tcpSessions:     make(map[string]*TCPSession),
 		serverEndpoints: cfg.Servers,
 	}
+	// Use random initial value to avoid conflicts after client restart
+	c.sessionIDCounter.Store(randomUint32())
+	return c
+}
+
+// randomUint32 generates a cryptographically random uint32.
+func randomUint32() uint32 {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	return binary.BigEndian.Uint32(b[:])
 }
 
 // Start begins listening and handling packets.
@@ -226,25 +238,26 @@ func (c *Client) handleListener() {
 func (c *Client) handlePacket(sourceAddr *net.UDPAddr, payload []byte) {
 	sourceKey := sourceAddr.String()
 
-	// Handle UDP transport endpoints
-	c.handleUDPTransport(sourceAddr, sourceKey, payload)
-
-	// Handle TCP transport endpoints
-	c.handleTCPTransport(sourceAddr, sourceKey, payload)
-}
-
-func (c *Client) handleUDPTransport(sourceAddr *net.UDPAddr, sourceKey string, payload []byte) {
-	// Get or create session for this source
+	// Get or create session for this source (shared across all transports)
 	session := c.getOrCreateUDPSession(sourceAddr, sourceKey)
 
-	// Get next sequence number for this session
+	// Get next sequence number ONCE for all paths (for deduplication consistency)
 	seq := session.seq.Add(1) - 1
 
 	// Update last activity
+	now := time.Now()
 	c.udpSessionsMu.Lock()
-	session.lastActivity = time.Now()
+	session.lastActivity = now
 	c.udpSessionsMu.Unlock()
 
+	// Handle UDP transport endpoints
+	c.handleUDPTransport(session, seq, payload)
+
+	// Handle TCP transport endpoints
+	c.handleTCPTransport(sourceAddr, sourceKey, session, seq, payload)
+}
+
+func (c *Client) handleUDPTransport(session *UDPSession, seq uint32, payload []byte) {
 	// Encode with session ID for UDP transport
 	packet := protocol.EncodeUDP(session.sessionID, seq, payload)
 
@@ -281,11 +294,19 @@ func (c *Client) getOrCreateUDPSession(sourceAddr *net.UDPAddr, sourceKey string
 	}
 
 	sessionID := c.sessionIDCounter.Add(1)
+	// Ensure session_id is never 0 (0 is often treated as invalid/uninitialized)
+	if sessionID == 0 {
+		sessionID = c.sessionIDCounter.Add(1)
+	}
 	session = &UDPSession{
 		sessionID:     sessionID,
 		lastActivity:  time.Now(),
 		responseDedup: NewResponseDedupWindow(defaultResponseDedupSize),
 	}
+	// Use random initial seq to avoid conflicts with server's old dedup window after restart.
+	// Limit to first half of uint32 range to avoid quick wrap-around which would cause
+	// the server's dedup window to reject new packets (seq < min_seq treated as duplicate).
+	session.seq.Store(randomUint32() % (1 << 31))
 	c.udpSessions[sourceKey] = session
 
 	// Store reverse mapping
@@ -377,9 +398,7 @@ func (c *Client) handleUDPServerResponse(serverConn *net.UDPConn) {
 	}
 }
 
-func (c *Client) handleTCPTransport(sourceAddr *net.UDPAddr, sourceKey string, payload []byte) {
-	// Get the sessionID for this source (shared with UDP transport)
-	udpSession := c.getOrCreateUDPSession(sourceAddr, sourceKey)
+func (c *Client) handleTCPTransport(sourceAddr *net.UDPAddr, sourceKey string, udpSession *UDPSession, seq uint32, payload []byte) {
 	sessionID := udpSession.sessionID
 
 	// For each TCP server endpoint, get or create a dedicated TCP session
@@ -398,21 +417,12 @@ func (c *Client) handleTCPTransport(sourceAddr *net.UDPAddr, sourceKey string, p
 			c.logger.Info("created TCP session", "source", sourceKey, "server", ep.Address)
 		}
 
-		// Get next sequence number for this session
-		seq := session.seq.Add(1) - 1
-
-		// Update last activity for both sessions
-		now := time.Now()
+		// Update last activity
 		session.mu.Lock()
-		session.lastActivity = now
+		session.lastActivity = time.Now()
 		session.mu.Unlock()
 
-		// Also update UDP session activity to prevent it from being cleaned up
-		c.udpSessionsMu.Lock()
-		udpSession.lastActivity = now
-		c.udpSessionsMu.Unlock()
-
-		// Encode with TCP format (includes session ID for unified session tracking)
+		// Encode with TCP format (use same seq as UDP for deduplication)
 		packet := protocol.EncodeTCP(sessionID, seq, payload)
 
 		// Send with length prefix
