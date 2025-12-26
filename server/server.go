@@ -107,15 +107,15 @@ type Server struct {
 
 	// Unified sessions by sessionID (shared by UDP and TCP)
 	sessionsMu sync.RWMutex
-	sessions   map[uint32]*TargetSession
+	sessions   map[uint64]*TargetSession
 
 	// Client paths per sessionID (all active UDP/TCP paths for responses)
 	clientPathsMu sync.RWMutex
-	clientPaths   map[uint32][]*ClientPath
+	clientPaths   map[uint64][]*ClientPath
 
 	// Track which sessionID each TCP connection belongs to (for cleanup)
 	tcpConnToSessionMu sync.RWMutex
-	tcpConnToSession   map[net.Conn]uint32
+	tcpConnToSession   map[net.Conn]uint64
 }
 
 // New creates a new Server instance.
@@ -126,9 +126,9 @@ func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 		logger:           logger,
 		ctx:              ctx,
 		cancel:           cancel,
-		sessions:         make(map[uint32]*TargetSession),
-		clientPaths:      make(map[uint32][]*ClientPath),
-		tcpConnToSession: make(map[net.Conn]uint32),
+		sessions:         make(map[uint64]*TargetSession),
+		clientPaths:      make(map[uint64][]*ClientPath),
+		tcpConnToSession: make(map[net.Conn]uint64),
 	}
 }
 
@@ -246,7 +246,7 @@ func (s *Server) handleUDPPacket(listener *net.UDPConn, clientAddr *net.UDPAddr,
 	s.logger.Debug("forwarded UDP packet", "sessionID", sessionID, "seq", seq, "size", len(payload))
 }
 
-func (s *Server) getOrCreateSession(sessionID uint32) (*TargetSession, bool) {
+func (s *Server) getOrCreateSession(sessionID uint64) (*TargetSession, bool) {
 	// Try read lock first for existing session
 	s.sessionsMu.RLock()
 	session, exists := s.sessions[sessionID]
@@ -298,7 +298,7 @@ func (s *Server) getOrCreateSession(sessionID uint32) (*TargetSession, bool) {
 }
 
 // addUDPPath adds or updates a UDP path for the given session.
-func (s *Server) addUDPPath(sessionID uint32, clientAddr *net.UDPAddr, listener *net.UDPConn) {
+func (s *Server) addUDPPath(sessionID uint64, clientAddr *net.UDPAddr, listener *net.UDPConn) {
 	s.clientPathsMu.Lock()
 	defer s.clientPathsMu.Unlock()
 
@@ -322,7 +322,7 @@ func (s *Server) addUDPPath(sessionID uint32, clientAddr *net.UDPAddr, listener 
 }
 
 // handleTargetResponse reads responses from target and sends to ALL client paths.
-func (s *Server) handleTargetResponse(ctx context.Context, sessionID uint32, targetConn *net.UDPConn) {
+func (s *Server) handleTargetResponse(ctx context.Context, sessionID uint64, targetConn *net.UDPConn) {
 	defer s.wg.Done()
 
 	buf := make([]byte, 65535)
@@ -570,7 +570,7 @@ func (s *Server) handleTCPPacket(conn net.Conn, data []byte) {
 }
 
 // addTCPPath adds a TCP path for the given session.
-func (s *Server) addTCPPath(sessionID uint32, conn net.Conn) {
+func (s *Server) addTCPPath(sessionID uint64, conn net.Conn) {
 	// First, track the sessionID for this connection
 	s.tcpConnToSessionMu.Lock()
 	s.tcpConnToSession[conn] = sessionID

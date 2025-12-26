@@ -6,60 +6,56 @@ import (
 )
 
 const (
-	// TCPHeaderSize is the protocol header size for TCP transport: [4-byte session_id][4-byte seq]
-	// Note: TCP framing (2-byte length prefix) is handled by the sender/receiver, not here.
-	TCPHeaderSize = 8
-
-	// UDPHeaderSize is the protocol header size for UDP transport: [4-byte session_id][4-byte seq]
-	UDPHeaderSize = 8
+	// HeaderSize is the protocol header size: [8-byte session_id][4-byte seq]
+	// Used for both TCP and UDP transport.
+	HeaderSize = 12
 )
 
 var (
-	ErrPacketTooShort    = errors.New("packet too short: must be at least 8 bytes")
-	ErrUDPPacketTooShort = errors.New("UDP packet too short: must be at least 8 bytes")
+	ErrPacketTooShort = errors.New("packet too short: must be at least 12 bytes")
 )
 
 // EncodeTCP creates a packet for TCP transport with session ID, sequence number, and payload.
-// Format: [4-byte session_id (big-endian)][4-byte sequence number (big-endian)][payload bytes]
+// Format: [8-byte session_id (big-endian)][4-byte sequence number (big-endian)][payload bytes]
 // This format matches UDP for unified session tracking across transport types.
-func EncodeTCP(sessionID uint32, seq uint32, payload []byte) []byte {
-	packet := make([]byte, TCPHeaderSize+len(payload))
-	binary.BigEndian.PutUint32(packet[:4], sessionID)
-	binary.BigEndian.PutUint32(packet[4:8], seq)
-	copy(packet[TCPHeaderSize:], payload)
+func EncodeTCP(sessionID uint64, seq uint32, payload []byte) []byte {
+	packet := make([]byte, HeaderSize+len(payload))
+	binary.BigEndian.PutUint64(packet[:8], sessionID)
+	binary.BigEndian.PutUint32(packet[8:12], seq)
+	copy(packet[HeaderSize:], payload)
 	return packet
 }
 
 // DecodeTCP extracts the session ID, sequence number, and payload from a TCP transport packet.
-// Returns ErrPacketTooShort if the packet is less than 8 bytes.
-func DecodeTCP(packet []byte) (sessionID uint32, seq uint32, payload []byte, err error) {
-	if len(packet) < TCPHeaderSize {
+// Returns ErrPacketTooShort if the packet is less than 12 bytes.
+func DecodeTCP(packet []byte) (sessionID uint64, seq uint32, payload []byte, err error) {
+	if len(packet) < HeaderSize {
 		return 0, 0, nil, ErrPacketTooShort
 	}
-	sessionID = binary.BigEndian.Uint32(packet[:4])
-	seq = binary.BigEndian.Uint32(packet[4:8])
-	payload = packet[TCPHeaderSize:]
+	sessionID = binary.BigEndian.Uint64(packet[:8])
+	seq = binary.BigEndian.Uint32(packet[8:12])
+	payload = packet[HeaderSize:]
 	return sessionID, seq, payload, nil
 }
 
 // EncodeUDP creates a packet for UDP transport with session ID, sequence number, and payload.
-// Format: [4-byte session_id (big-endian)][4-byte sequence number (big-endian)][payload bytes]
-func EncodeUDP(sessionID uint32, seq uint32, payload []byte) []byte {
-	packet := make([]byte, UDPHeaderSize+len(payload))
-	binary.BigEndian.PutUint32(packet[:4], sessionID)
-	binary.BigEndian.PutUint32(packet[4:8], seq)
-	copy(packet[UDPHeaderSize:], payload)
+// Format: [8-byte session_id (big-endian)][4-byte sequence number (big-endian)][payload bytes]
+func EncodeUDP(sessionID uint64, seq uint32, payload []byte) []byte {
+	packet := make([]byte, HeaderSize+len(payload))
+	binary.BigEndian.PutUint64(packet[:8], sessionID)
+	binary.BigEndian.PutUint32(packet[8:12], seq)
+	copy(packet[HeaderSize:], payload)
 	return packet
 }
 
 // DecodeUDP extracts the session ID, sequence number, and payload from a UDP transport packet.
-// Returns ErrUDPPacketTooShort if the packet is less than 8 bytes.
-func DecodeUDP(packet []byte) (sessionID uint32, seq uint32, payload []byte, err error) {
-	if len(packet) < UDPHeaderSize {
-		return 0, 0, nil, ErrUDPPacketTooShort
+// Returns ErrPacketTooShort if the packet is less than 12 bytes.
+func DecodeUDP(packet []byte) (sessionID uint64, seq uint32, payload []byte, err error) {
+	if len(packet) < HeaderSize {
+		return 0, 0, nil, ErrPacketTooShort
 	}
-	sessionID = binary.BigEndian.Uint32(packet[:4])
-	seq = binary.BigEndian.Uint32(packet[4:8])
-	payload = packet[UDPHeaderSize:]
+	sessionID = binary.BigEndian.Uint64(packet[:8])
+	seq = binary.BigEndian.Uint32(packet[8:12])
+	payload = packet[HeaderSize:]
 	return sessionID, seq, payload, nil
 }

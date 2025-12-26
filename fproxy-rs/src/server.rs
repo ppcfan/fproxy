@@ -108,13 +108,13 @@ pub struct Server {
     cancel_token: CancellationToken,
 
     /// Sessions by session_id.
-    sessions: RwLock<HashMap<u32, Arc<TargetSession>>>,
+    sessions: RwLock<HashMap<u64, Arc<TargetSession>>>,
 
     /// Client paths per session_id.
-    client_paths: RwLock<HashMap<u32, Vec<Arc<ClientPath>>>>,
+    client_paths: RwLock<HashMap<u64, Vec<Arc<ClientPath>>>>,
 
     /// Track which session_id each TCP connection belongs to.
-    tcp_conn_to_session: RwLock<HashMap<usize, u32>>,
+    tcp_conn_to_session: RwLock<HashMap<usize, u64>>,
 }
 
 impl Server {
@@ -270,7 +270,7 @@ impl Server {
 
     async fn get_or_create_session(
         self: &Arc<Self>,
-        session_id: u32,
+        session_id: u64,
     ) -> Option<(Arc<TargetSession>, bool)> {
         // Try read lock first
         {
@@ -334,7 +334,7 @@ impl Server {
         Some((session, true))
     }
 
-    async fn add_udp_path(&self, session_id: u32, client_addr: SocketAddr, socket: Arc<UdpSocket>) {
+    async fn add_udp_path(&self, session_id: u64, client_addr: SocketAddr, socket: Arc<UdpSocket>) {
         let mut paths = self.client_paths.write().await;
         let session_paths = paths.entry(session_id).or_default();
 
@@ -368,7 +368,7 @@ impl Server {
     async fn handle_target_response(
         self: Arc<Self>,
         cancel_token: CancellationToken,
-        session_id: u32,
+        session_id: u64,
         target_conn: Arc<UdpSocket>,
     ) {
         let mut buf = vec![0u8; 65535];
@@ -396,7 +396,7 @@ impl Server {
         }
     }
 
-    async fn send_response_to_all_paths(&self, session_id: u32, payload: &[u8]) {
+    async fn send_response_to_all_paths(&self, session_id: u64, payload: &[u8]) {
         // Update last activity
         {
             let sessions = self.sessions.read().await;
@@ -617,7 +617,7 @@ impl Server {
 
     async fn add_tcp_path(
         &self,
-        session_id: u32,
+        session_id: u64,
         conn_id: usize,
         writer: Arc<Mutex<WriteHalf<TcpStream>>>,
     ) {

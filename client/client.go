@@ -82,7 +82,7 @@ func (d *ResponseDedupWindow) IsDuplicate(seq uint32) bool {
 
 // UDPSession tracks a session for UDP transport.
 type UDPSession struct {
-	sessionID       uint32
+	sessionID       uint64
 	seq             atomic.Uint32
 	lastActivity    time.Time
 	responseDedupMu sync.Mutex
@@ -109,7 +109,7 @@ type Client struct {
 	cancel     context.CancelFunc
 
 	// Session ID counter for UDP transport
-	sessionIDCounter atomic.Uint32
+	sessionIDCounter atomic.Uint64
 
 	// For UDP transport: map sourceAddr -> UDPSession
 	udpSessionsMu sync.RWMutex
@@ -117,7 +117,7 @@ type Client struct {
 
 	// Reverse map for UDP: sessionID -> sourceAddr
 	udpSessionAddrsMu sync.RWMutex
-	udpSessionAddrs   map[uint32]*net.UDPAddr
+	udpSessionAddrs   map[uint64]*net.UDPAddr
 
 	// For TCP transport: map sourceAddr -> TCPSession
 	tcpSessionsMu sync.RWMutex
@@ -140,13 +140,22 @@ func New(cfg *config.ClientConfig, logger *slog.Logger) *Client {
 		ctx:             ctx,
 		cancel:          cancel,
 		udpSessions:     make(map[string]*UDPSession),
-		udpSessionAddrs: make(map[uint32]*net.UDPAddr),
+		udpSessionAddrs: make(map[uint64]*net.UDPAddr),
 		tcpSessions:     make(map[string]*TCPSession),
 		serverEndpoints: cfg.Servers,
 	}
 	// Use random initial value to avoid conflicts after client restart
-	c.sessionIDCounter.Store(randomUint32())
+	c.sessionIDCounter.Store(randomUint64())
 	return c
+}
+
+// randomUint64 generates a cryptographically random uint64.
+func randomUint64() uint64 {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	return binary.BigEndian.Uint64(b[:])
 }
 
 // randomUint32 generates a cryptographically random uint32.
@@ -258,7 +267,7 @@ func (c *Client) handlePacket(sourceAddr *net.UDPAddr, payload []byte) {
 }
 
 func (c *Client) handleUDPTransport(session *UDPSession, seq uint32, payload []byte) {
-	// Encode with session ID for UDP transport
+	// Encode with session ID for UDP transport (sessionID is uint64)
 	packet := protocol.EncodeUDP(session.sessionID, seq, payload)
 
 	// Send to all UDP server endpoints
@@ -399,7 +408,7 @@ func (c *Client) handleUDPServerResponse(serverConn *net.UDPConn) {
 }
 
 func (c *Client) handleTCPTransport(sourceAddr *net.UDPAddr, sourceKey string, udpSession *UDPSession, seq uint32, payload []byte) {
-	sessionID := udpSession.sessionID
+	sessionID := udpSession.sessionID // uint64
 
 	// For each TCP server endpoint, get or create a dedicated TCP session
 	for _, ep := range c.serverEndpoints {

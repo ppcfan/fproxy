@@ -8,7 +8,7 @@ import (
 func TestEncodeTCP(t *testing.T) {
 	tests := []struct {
 		name      string
-		sessionID uint32
+		sessionID uint64
 		seq       uint32
 		payload   []byte
 		want      []byte
@@ -18,35 +18,35 @@ func TestEncodeTCP(t *testing.T) {
 			sessionID: 0,
 			seq:       0,
 			payload:   []byte{},
-			want:      []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			want:      []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		},
 		{
 			name:      "session 1, seq 0 with payload",
 			sessionID: 1,
 			seq:       0,
 			payload:   []byte("hello"),
-			want:      []byte{0, 0, 0, 1, 0, 0, 0, 0, 'h', 'e', 'l', 'l', 'o'},
+			want:      []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 'h', 'e', 'l', 'l', 'o'},
 		},
 		{
 			name:      "max session and seq",
-			sessionID: 0xFFFFFFFF,
+			sessionID: 0xFFFFFFFFFFFFFFFF,
 			seq:       0xFFFFFFFF,
 			payload:   []byte{0xAB},
-			want:      []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
+			want:      []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
 		},
 		{
 			name:      "session 256, seq 1",
 			sessionID: 256,
 			seq:       1,
 			payload:   []byte("test"),
-			want:      []byte{0, 0, 1, 0, 0, 0, 0, 1, 't', 'e', 's', 't'},
+			want:      []byte{0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 't', 'e', 's', 't'},
 		},
 		{
 			name:      "verify big-endian encoding",
-			sessionID: 0x01020304,
-			seq:       0x05060708,
+			sessionID: 0x0102030405060708,
+			seq:       0x090A0B0C,
 			payload:   []byte{},
-			want:      []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+			want:      []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C},
 		},
 	}
 
@@ -64,14 +64,14 @@ func TestDecodeTCP(t *testing.T) {
 	tests := []struct {
 		name          string
 		packet        []byte
-		wantSessionID uint32
+		wantSessionID uint64
 		wantSeq       uint32
 		wantPayload   []byte
 		wantErr       error
 	}{
 		{
 			name:          "minimum valid packet",
-			packet:        []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			packet:        []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 			wantSessionID: 0,
 			wantSeq:       0,
 			wantPayload:   []byte{},
@@ -79,7 +79,7 @@ func TestDecodeTCP(t *testing.T) {
 		},
 		{
 			name:          "packet with payload",
-			packet:        []byte{0, 0, 0, 1, 0, 0, 0, 2, 'h', 'e', 'l', 'l', 'o'},
+			packet:        []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 'h', 'e', 'l', 'l', 'o'},
 			wantSessionID: 1,
 			wantSeq:       2,
 			wantPayload:   []byte("hello"),
@@ -87,17 +87,17 @@ func TestDecodeTCP(t *testing.T) {
 		},
 		{
 			name:          "max session and seq",
-			packet:        []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
-			wantSessionID: 0xFFFFFFFF,
+			packet:        []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
+			wantSessionID: 0xFFFFFFFFFFFFFFFF,
 			wantSeq:       0xFFFFFFFF,
 			wantPayload:   []byte{0xAB},
 			wantErr:       nil,
 		},
 		{
 			name:          "verify big-endian decoding",
-			packet:        []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-			wantSessionID: 0x01020304,
-			wantSeq:       0x05060708,
+			packet:        []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C},
+			wantSessionID: 0x0102030405060708,
+			wantSeq:       0x090A0B0C,
 			wantPayload:   []byte{},
 			wantErr:       nil,
 		},
@@ -107,13 +107,13 @@ func TestDecodeTCP(t *testing.T) {
 			wantErr: ErrPacketTooShort,
 		},
 		{
-			name:    "too short - 7 bytes",
-			packet:  []byte{0, 0, 0, 0, 0, 0, 0},
+			name:    "too short - 11 bytes",
+			packet:  []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 			wantErr: ErrPacketTooShort,
 		},
 		{
-			name:    "too short - 4 bytes (old TCP size)",
-			packet:  []byte{0, 0, 0, 0},
+			name:    "too short - 8 bytes (old header size)",
+			packet:  []byte{0, 0, 0, 0, 0, 0, 0, 0},
 			wantErr: ErrPacketTooShort,
 		},
 	}
@@ -144,7 +144,7 @@ func TestDecodeTCP(t *testing.T) {
 func TestEncodeUDP(t *testing.T) {
 	tests := []struct {
 		name      string
-		sessionID uint32
+		sessionID uint64
 		seq       uint32
 		payload   []byte
 		want      []byte
@@ -154,35 +154,35 @@ func TestEncodeUDP(t *testing.T) {
 			sessionID: 0,
 			seq:       0,
 			payload:   []byte{},
-			want:      []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			want:      []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		},
 		{
 			name:      "session 1, seq 0 with payload",
 			sessionID: 1,
 			seq:       0,
 			payload:   []byte("hello"),
-			want:      []byte{0, 0, 0, 1, 0, 0, 0, 0, 'h', 'e', 'l', 'l', 'o'},
+			want:      []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 'h', 'e', 'l', 'l', 'o'},
 		},
 		{
 			name:      "session 256, seq 1",
 			sessionID: 256,
 			seq:       1,
 			payload:   []byte("test"),
-			want:      []byte{0, 0, 1, 0, 0, 0, 0, 1, 't', 'e', 's', 't'},
+			want:      []byte{0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 't', 'e', 's', 't'},
 		},
 		{
 			name:      "max session and seq",
-			sessionID: 0xFFFFFFFF,
+			sessionID: 0xFFFFFFFFFFFFFFFF,
 			seq:       0xFFFFFFFF,
 			payload:   []byte{0xAB},
-			want:      []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
+			want:      []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
 		},
 		{
 			name:      "verify big-endian encoding",
-			sessionID: 0x01020304,
-			seq:       0x05060708,
+			sessionID: 0x0102030405060708,
+			seq:       0x090A0B0C,
 			payload:   []byte{},
-			want:      []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+			want:      []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C},
 		},
 	}
 
@@ -200,14 +200,14 @@ func TestDecodeUDP(t *testing.T) {
 	tests := []struct {
 		name          string
 		packet        []byte
-		wantSessionID uint32
+		wantSessionID uint64
 		wantSeq       uint32
 		wantPayload   []byte
 		wantErr       error
 	}{
 		{
 			name:          "minimum valid packet",
-			packet:        []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			packet:        []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 			wantSessionID: 0,
 			wantSeq:       0,
 			wantPayload:   []byte{},
@@ -215,7 +215,7 @@ func TestDecodeUDP(t *testing.T) {
 		},
 		{
 			name:          "packet with payload",
-			packet:        []byte{0, 0, 0, 1, 0, 0, 0, 2, 'h', 'e', 'l', 'l', 'o'},
+			packet:        []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 'h', 'e', 'l', 'l', 'o'},
 			wantSessionID: 1,
 			wantSeq:       2,
 			wantPayload:   []byte("hello"),
@@ -223,34 +223,34 @@ func TestDecodeUDP(t *testing.T) {
 		},
 		{
 			name:          "max session and seq",
-			packet:        []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
-			wantSessionID: 0xFFFFFFFF,
+			packet:        []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAB},
+			wantSessionID: 0xFFFFFFFFFFFFFFFF,
 			wantSeq:       0xFFFFFFFF,
 			wantPayload:   []byte{0xAB},
 			wantErr:       nil,
 		},
 		{
 			name:          "verify big-endian decoding",
-			packet:        []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-			wantSessionID: 0x01020304,
-			wantSeq:       0x05060708,
+			packet:        []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C},
+			wantSessionID: 0x0102030405060708,
+			wantSeq:       0x090A0B0C,
 			wantPayload:   []byte{},
 			wantErr:       nil,
 		},
 		{
 			name:    "too short - empty",
 			packet:  []byte{},
-			wantErr: ErrUDPPacketTooShort,
+			wantErr: ErrPacketTooShort,
 		},
 		{
-			name:    "too short - 7 bytes",
-			packet:  []byte{0, 0, 0, 0, 0, 0, 0},
-			wantErr: ErrUDPPacketTooShort,
+			name:    "too short - 11 bytes",
+			packet:  []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+			wantErr: ErrPacketTooShort,
 		},
 		{
-			name:    "too short - 4 bytes (TCP size but not UDP)",
-			packet:  []byte{0, 0, 0, 0},
-			wantErr: ErrUDPPacketTooShort,
+			name:    "too short - 8 bytes (old header size)",
+			packet:  []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			wantErr: ErrPacketTooShort,
 		},
 	}
 
@@ -279,15 +279,15 @@ func TestDecodeUDP(t *testing.T) {
 
 func TestUDPEncodeDecodeRoundTrip(t *testing.T) {
 	testCases := []struct {
-		sessionID uint32
+		sessionID uint64
 		seq       uint32
 		payload   []byte
 	}{
 		{0, 0, []byte{}},
 		{1, 0, []byte("test")},
 		{100, 1000, []byte("longer payload with more data")},
-		{0xFFFFFFFF, 0xFFFFFFFF, []byte{0, 1, 2, 3, 4, 5}},
-		{0x12345678, 0x9ABCDEF0, []byte("session test")},
+		{0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF, []byte{0, 1, 2, 3, 4, 5}},
+		{0x123456789ABCDEF0, 0x9ABCDEF0, []byte("session test")},
 	}
 
 	for _, tc := range testCases {
@@ -311,15 +311,15 @@ func TestUDPEncodeDecodeRoundTrip(t *testing.T) {
 
 func TestTCPEncodeDecodeRoundTrip(t *testing.T) {
 	testCases := []struct {
-		sessionID uint32
+		sessionID uint64
 		seq       uint32
 		payload   []byte
 	}{
 		{0, 0, []byte{}},
 		{1, 0, []byte("test")},
 		{100, 1000, []byte("longer payload with more data")},
-		{0xFFFFFFFF, 0xFFFFFFFF, []byte{0, 1, 2, 3, 4, 5}},
-		{0x12345678, 0x9ABCDEF0, []byte("session test")},
+		{0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF, []byte{0, 1, 2, 3, 4, 5}},
+		{0x123456789ABCDEF0, 0x9ABCDEF0, []byte("session test")},
 	}
 
 	for _, tc := range testCases {

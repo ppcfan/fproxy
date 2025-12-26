@@ -88,13 +88,13 @@ The system SHALL use a unified packet format for both UDP and TCP transport betw
 
 #### Scenario: UDP transport packet format
 - **WHEN** a packet is transmitted via UDP transport (request or response)
-- **THEN** the protocol layer format is `[4-byte session_id (big-endian)][4-byte seq (big-endian)][payload]`
-- **AND** the total protocol header size is 8 bytes
+- **THEN** the protocol layer format is `[8-byte session_id (big-endian)][4-byte seq (big-endian)][payload]`
+- **AND** the total protocol header size is 12 bytes
 
 #### Scenario: TCP transport packet format
 - **WHEN** a packet is transmitted via TCP transport (request or response)
-- **THEN** the protocol layer format is `[4-byte session_id (big-endian)][4-byte seq (big-endian)][payload]`
-- **AND** the total protocol header size is 8 bytes
+- **THEN** the protocol layer format is `[8-byte session_id (big-endian)][4-byte seq (big-endian)][payload]`
+- **AND** the total protocol header size is 12 bytes
 - **AND** the TCP sender/receiver adds a 2-byte length prefix (big-endian) for framing
 
 #### Scenario: Packet decoding

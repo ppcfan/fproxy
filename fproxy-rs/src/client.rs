@@ -10,7 +10,7 @@ use crate::protocol;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
@@ -82,7 +82,7 @@ impl ResponseDedupWindow {
 
 /// UDP session tracks a session for UDP transport.
 struct UdpSession {
-    session_id: u32,
+    session_id: u64,
     seq: AtomicU32,
     last_activity: RwLock<Instant>,
     response_dedup: RwLock<ResponseDedupWindow>,
@@ -103,13 +103,13 @@ pub struct Client {
     listen_addr: RwLock<Option<SocketAddr>>,
 
     /// Session ID counter for UDP transport.
-    session_id_counter: AtomicU32,
+    session_id_counter: AtomicU64,
 
     /// For UDP transport: map sourceAddr -> UdpSession.
     udp_sessions: RwLock<HashMap<SocketAddr, Arc<UdpSession>>>,
 
     /// Reverse map for UDP: sessionID -> sourceAddr.
-    udp_session_addrs: RwLock<HashMap<u32, SocketAddr>>,
+    udp_session_addrs: RwLock<HashMap<u64, SocketAddr>>,
 
     /// For TCP transport: map (sourceAddr, serverAddr) -> TcpSession.
     tcp_sessions: RwLock<HashMap<String, Arc<TcpSession>>>,
@@ -127,7 +127,7 @@ impl Client {
             listener: RwLock::new(None),
             listen_addr: RwLock::new(None),
             // Use random initial value to avoid conflicts after client restart
-            session_id_counter: AtomicU32::new(rand::random()),
+            session_id_counter: AtomicU64::new(rand::random()),
             udp_sessions: RwLock::new(HashMap::new()),
             udp_session_addrs: RwLock::new(HashMap::new()),
             tcp_sessions: RwLock::new(HashMap::new()),
@@ -238,7 +238,7 @@ impl Client {
     }
 
     async fn handle_udp_transport(self: &Arc<Self>, session: &UdpSession, seq: u32, payload: &[u8]) {
-        // Encode with session ID for UDP transport
+        // Encode with session ID for UDP transport (session_id is u64)
         let packet = protocol::encode_udp(session.session_id, seq, payload);
 
         // Send to all UDP server endpoints
@@ -277,7 +277,7 @@ impl Client {
             return Arc::clone(session);
         }
 
-        let mut session_id = self.session_id_counter.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        let mut session_id: u64 = self.session_id_counter.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
         // Ensure session_id is never 0 (0 is often treated as invalid/uninitialized).
         // Must increment counter again to avoid duplicate IDs after wrap.
         if session_id == 0 {
